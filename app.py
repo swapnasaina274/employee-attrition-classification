@@ -1,60 +1,102 @@
-import streamlit as st
-import joblib
-import pandas as pd
+import gradio as gr
 import numpy as np
+import pandas as pd
+import pickle
 
-# Load saved model and scaler
-model = joblib.load('attrition_model.pkl')
-scaler = joblib.load('scaler.pkl')
+# 1. Load your pre-trained model and scaler
+with open("attrition_model.pkl", "rb") as f:
+    model = pickle.load(f)
 
-# Retrieve feature names expected by the scaler/model
-expected_features = list(scaler.feature_names_in_)
+with open("scaler.pkl", "rb") as f:
+    scaler = pickle.load(f)
 
-st.title("👔 Employee Attrition Risk Predictor")
-st.write("Enter employee details to evaluate attrition probability.")
 
-# Input controls
-col1, col2 = st.columns(2)
+def predict_attrition(
+    age,
+    distance_from_home,
+    job_satisfaction,
+    monthly_income,
+    overtime,
+    years_at_company,
+):
+    """Processes user input, applies feature transformation, and returns predictions."""
+    # Convert categorical inputs to numeric (adjust binary mapping if your training used different values)
+    overtime_val = 1 if overtime == "Yes" else 0
 
-with col1:
-    age = st.slider("Age", 18, 65, 30)
-    monthly_income = st.number_input("Monthly Income ($)", min_value=1000, value=5000)
-    distance_from_home = st.slider("Distance From Home (km)", 1, 50, 5)
+    # Create array of features in the exact order expected by your model/scaler
+    raw_features = np.array(
+        [
+            [
+                age,
+                distance_from_home,
+                job_satisfaction,
+                monthly_income,
+                overtime_val,
+                years_at_company,
+            ]
+        ]
+    )
 
-with col2:
-    overtime = st.selectbox("OverTime", ["Yes", "No"])
-    department = st.selectbox("Department", ["Research & Development", "Sales", "Human Resources"])
+    # Transform features using scaler if applicable
+    try:
+        scaled_features = scaler.transform(raw_features)
+    except Exception:
+        scaled_features = raw_features
 
-# Prediction logic
-if st.button("Predict Attrition Risk"):
-    # Create an empty input row populated with zeros matching all model features
-    input_data = pd.DataFrame(np.zeros((1, len(expected_features))), columns=expected_features)
-    
-    # Fill in matching numeric values if present in model features
-    if 'Age' in input_data.columns:
-        input_data['Age'] = age
-    if 'MonthlyIncome' in input_data.columns:
-        input_data['MonthlyIncome'] = monthly_income
-    if 'DistanceFromHome' in input_data.columns:
-        input_data['DistanceFromHome'] = distance_from_home
-        
-    # Set categorical encoded flags if present
-    if overtime == "Yes" and 'OverTime_Yes' in input_data.columns:
-        input_data['OverTime_Yes'] = 1
-    elif overtime == "Yes" and 'OverTime' in input_data.columns:
-        input_data['OverTime'] = 1
-        
-    dept_col = f"Department_{department}"
-    if dept_col in input_data.columns:
-        input_data[dept_col] = 1
+    # Predict probabilities
+    probabilities = model.predict_proba(scaled_features)[0]
+    stay_prob = float(probabilities[0])
+    leave_prob = float(probabilities[1])
 
-    # Scale and predict
-    scaled_data = scaler.transform(input_data)
-    prediction = model.predict(scaled_data)[0]
-    prob = model.predict_proba(scaled_data)[0][1]
-
-    st.divider()
-    if prediction == 1:
-        st.error(f"⚠️ **High Risk of Leaving** (Probability: {prob:.1%})")
+    # Dynamic status formatting
+    if leave_prob > 0.5:
+        risk_status = "### 🔴 **High Attrition Risk**"
+        rec = "Recommendation: Consider reviewing compensation, workload/overtime balance, or career path progression."
     else:
-        st.success(f"✅ **Low Risk of Leaving** (Probability: {prob:.1%})")
+        risk_status = "### 🟢 **Low Attrition Risk**"
+        rec = "Recommendation: Employee engagement parameters are within healthy retention thresholds."
+
+    confidence_dict = {"Stay": stay_prob, "Leave (Attrition Risk)": leave_prob}
+
+    summary_md = (
+        f"{risk_status}\n\n"
+        f"Probability of Leaving: **{leave_prob:.1%}**\n\n"
+        f"*{rec}*"
+    )
+
+    return confidence_dict, summary_md
+
+
+# 2. Build Modern Gradio UI
+theme = gr.themes.Soft(primary_hue="indigo", secondary_hue="slate")
+
+with gr.Blocks(theme=theme, title="Employee Attrition Predictor") as demo:
+    gr.Markdown(
+        """
+        # 🏢 Employee Attrition Classification System
+        Predict employee flight risk and evaluate retention factors using Machine Learning.
+        """
+    )
+
+    with gr.Row():
+        # Left Panel: User Inputs
+        with gr.Column(scale=1):
+            gr.Markdown("### 📋 Employee Details")
+            age = gr.Slider(
+                minimum=18, maximum=65, value=30, step=1, label="Age"
+            )
+            distance_from_home = gr.Slider(
+                minimum=1,
+                maximum=50,
+                value=10,
+                step=1,
+                label="Distance From Home (km)",
+            )
+            job_satisfaction = gr.Slider(
+                minimum=1,
+                maximum=4,
+                value=3,
+                step=1,
+                label="Job Satisfaction Rating (1-4)",
+            )
+            monthly_income = gr.
